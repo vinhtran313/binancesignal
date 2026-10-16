@@ -1,0 +1,1 @@
+ALTER TABLE "Position" ALTER COLUMN "leverage" SET DEFAULT 125;
