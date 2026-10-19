@@ -10,9 +10,10 @@
  * Exit: Stop Loss only (no take profit, no reverse-signal exit in v1)
  */
 
-import type { Candle, Side, Timeframe, SignalEvent, SignalAction } from '@/shared/types';
+import type { Candle, Side, Timeframe, SignalEvent, SignalAction, SignalStrengthAssessment } from '@/shared/types';
 import { calculateMACD } from '../indicators/macd';
 import { getWaveStopLoss } from './wave-detection';
+import { calculateSignalStrength } from './signal-strength';
 import { logger } from '../utils/logger';
 import { v4 as uuid } from 'uuid';
 
@@ -27,6 +28,7 @@ export interface SignalCheckResult {
   macdHistogram: number;
   prevHistogram: number;
   rejectReason: string | null;
+  strength: SignalStrengthAssessment | null;
 }
 
 /**
@@ -52,6 +54,7 @@ export function checkMacdSignal(
     macdHistogram: 0,
     prevHistogram: 0,
     rejectReason: null,
+    strength: null,
   };
 
   if (candles.length < macdSlow + macdSignalPeriod + 2) {
@@ -101,13 +104,14 @@ export function checkMacdSignal(
   const side: Side = isLongSignal ? 'LONG' : 'SHORT';
   const action: SignalAction = isLongSignal ? 'ENTRY_LONG' : 'ENTRY_SHORT';
 
-  // Position and risk constraints are rechecked atomically when the user confirms.
+  // Position and risk constraints are rechecked atomically before execution.
   void existingSymbolPosition;
   void openPositionsCount;
   void maxPositions;
 
   // Calculate Stop Loss from wave analysis
   const stopLoss = getWaveStopLoss(side, macd.histogram, candles, lastIdx);
+  const strength = calculateSignalStrength(side, candles, macd, stopLoss);
 
   if (stopLoss === null) {
     return {
@@ -116,6 +120,7 @@ export function checkMacdSignal(
       hasSignal: true,
       action,
       side,
+      strength,
       rejectReason: 'Could not determine stop loss from wave analysis',
     };
   }
@@ -129,6 +134,7 @@ export function checkMacdSignal(
       action,
       side,
       stopLoss,
+      strength,
       rejectReason: 'LONG stop loss is above or at entry price',
     };
   }
@@ -141,6 +147,7 @@ export function checkMacdSignal(
       action,
       side,
       stopLoss,
+      strength,
       rejectReason: 'SHORT stop loss is below or at entry price',
     };
   }
@@ -150,6 +157,7 @@ export function checkMacdSignal(
     action,
     side,
     stopLoss,
+    strength,
     ...base,
     rejectReason: null,
   };
@@ -199,5 +207,14 @@ export function buildSignalEvent(
     macdSignal: result.macdSignal,
     macdHistogram: result.macdHistogram,
     prevHistogram: result.prevHistogram,
+    strengthScore: result.strength?.score ?? 0,
+    strengthLabel: result.strength?.label ?? 'UNSCORED',
+    strengthBreakdown: result.strength?.breakdown ?? {
+      emaAlignment: 0, macdMomentum: 0, waveContext: 0, rsi: 0, volume: 0, stopQuality: 0,
+      rsiValue: null, volumeRatio: null, atr: null, stopDistanceAtr: null,
+      waveComparison: 'UNAVAILABLE', previousMacdExtreme: null, priorMacdExtreme: null,
+      previousPriceExtreme: null, priorPriceExtreme: null,
+    },
+    scoreVersion: result.strength?.version ?? 'signal-strength-v1',
   };
 }

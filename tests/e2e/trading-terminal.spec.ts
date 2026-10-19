@@ -2,17 +2,19 @@ import { test, expect, type Page } from '@playwright/test';
 
 const now = Date.now();
 const account = {
-  id: 'account-1', initialBalance: 500, balance: 500, equity: 500, availableBalance: 500,
+  id: 'account-1', initialBalance: 1000, balance: 1000, equity: 1000, availableBalance: 1000,
   usedMargin: 0, realizedPnl: 0, unrealizedPnl: 0, totalFees: 0, totalFunding: 0,
   openPositionsCount: 0, maxPositions: 10, snapshotChangePercent: null, updatedAt: now,
 };
-const config = { timeframe: '5m', riskPercent: 1, maxPositions: 10, leverage: 1, takerFee: 0.001, makerFee: 0.001, slippage: 0.0005, riskRewardRatio: 2, enabledSymbols: ['BTCUSDT', 'ETHUSDT'] };
+const config = { timeframe: '5m', riskPercent: 1, maxPositions: 10, leverage: 1, takerFee: 0.001, makerFee: 0.001, slippage: 0.0005, riskRewardRatio: 1.2, enabledSymbols: ['BTCUSDT', 'ETHUSDT'] };
 const signal = {
   id: '11111111-1111-4111-8111-111111111111', strategyRunId: 'run-1', symbol: 'BTCUSDT', timeframe: '5m',
-  action: 'ENTRY_LONG', result: 'ACTIONABLE', rejectReason: null, entryPrice: 100, stopLoss: 95, takeProfit: null,
+  action: 'ENTRY_LONG', result: 'CONFIRMED', rejectReason: null, entryPrice: 100, stopLoss: 95, takeProfit: 106,
   candleCloseTime: now + 240_000, candleOpenTime: now - 60_000, expiresAt: now + 240_000, confirmationTime: null,
   macdLine: -1.25, macdSignal: -1.3, macdHistogram: 0.05, prevHistogram: -0.02, createdAt: now - 1_000,
-  tradeId: null,
+  strengthScore: 72, strengthLabel: 'MODERATE', scoreVersion: 'signal-strength-v1',
+  strengthBreakdown: { emaAlignment: 20, macdMomentum: 18, waveContext: 14, rsi: 7, volume: 6, stopQuality: 7, rsiValue: 52, volumeRatio: 1.2, atr: 1, stopDistanceAtr: 1, waveComparison: 'MOMENTUM_IMPROVING', previousMacdExtreme: -1, priorMacdExtreme: -1.2, previousPriceExtreme: 98, priorPriceExtreme: 99 },
+  tradeId: 'trade-1',
 };
 const notification = { id: '22222222-2222-4222-8222-222222222222', signalId: signal.id, readAt: null, dismissedAt: null, createdAt: now - 1_000, signal };
 const candles = Array.from({ length: 80 }, (_, i) => {
@@ -57,14 +59,20 @@ test('renders the trading terminal and all four synchronized chart panes', async
   await page.screenshot({ path: 'test-results/trading-terminal.png', fullPage: true });
 });
 
-test('requires explicit confirmation before opening a paper trade', async ({ page }) => {
+test('shows the automatic paper entry and signal strength', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Notifications/ }).click();
   await page.getByText('BTCUSDT · LONG · 5m').click();
-  await expect(page.getByRole('dialog', { name: 'Review paper entry' })).toBeVisible();
-  await expect(page.getByText('No position is created until you confirm below.')).toBeVisible();
-  await page.getByRole('button', { name: 'Confirm entry' }).click();
-  await expect(page.getByText('Review paper entry')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Automatic paper entry' })).toBeVisible();
+  await expect(page.getByText('Paper position opened automatically at strength 72/100.')).toBeVisible();
+  await expect(page.getByText('Signal strength', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open paper order' })).toHaveCount(0);
+});
+
+test('watchlist selection switches the chart symbol', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /ETH USDT · Perpetual/ }).click();
+  await expect(page.getByRole('button', { name: 'ETH /USDT' })).toBeVisible();
 });
 
 test('strategy panel opens and closes without closing positions', async ({ page }) => {

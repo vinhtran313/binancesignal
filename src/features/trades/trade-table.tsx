@@ -352,6 +352,9 @@ export function TradeTable({ positions, markPrices }: TradeTableProps) {
 
 function TradeDetail({ position }: { position: Position }) {
   const entry = position.analytics?.entrySnapshot as Record<string, unknown> | undefined;
+  const signal = position.analytics?.signalSnapshot as Record<string, unknown> | undefined;
+  const strength = signal?.strengthBreakdown as Record<string, unknown> | undefined;
+  const signalIndicators = signal?.indicators as Record<string, unknown> | undefined;
   const wave = position.analytics?.previousWave as Record<string, unknown> | undefined;
   const exit = position.analytics?.exitSnapshot as Record<string, unknown> | null | undefined;
   const ema = exit?.emaSnapshot as { timeframe?: string; timestamp?: number | null; values?: Record<string, number | null>; unavailableReason?: string } | undefined;
@@ -390,6 +393,16 @@ function TradeDetail({ position }: { position: Position }) {
         <DetailRow label="Take Profit" value={formatPrice(position.takeProfit)} />
         <DetailRow label="Initial risk budget" value={formatUSDT(position.initialRiskBudget)} />
         <DetailRow label="Target RR" value={`1:${position.riskRewardRatio}`} />
+      </div>
+      <div>
+        <h4 className="font-medium text-terminal-text mb-1">Signal quality</h4>
+        <DetailRow label="Strength" value={`${asText(signal?.strengthScore, 0)}/100 · ${asText(signal?.strengthLabel, 12)}`} />
+        <DetailRow label="EMA / MACD / wave" value={`${asText(strength?.emaAlignment, 0)}/25 · ${asText(strength?.macdMomentum, 0)}/25 · ${asText(strength?.waveContext, 0)}/20`} />
+        <DetailRow label="RSI / volume / SL" value={`${asText(strength?.rsi, 0)}/10 · ${asText(strength?.volume, 0)}/10 · ${asText(strength?.stopQuality, 0)}/10`} />
+        <DetailRow label="Wave comparison" value={asText(strength?.waveComparison, 12)} />
+        <DetailRow label="Previous MACD extreme" value={`${asText(strength?.previousMacdExtreme)} · prior ${asText(strength?.priorMacdExtreme)}`} />
+        <DetailRow label="Entry EMA 34 / 89" value={`${asText(signalIndicators?.ema34)} / ${asText(signalIndicators?.ema89)}`} />
+        <DetailRow label="Entry EMA 200 / 610" value={`${asText(signalIndicators?.ema200)} / ${asText(signalIndicators?.ema610)}`} />
       </div>
       <div>
         <h4 className="font-medium text-terminal-text mb-1">Previous same-direction MACD wave</h4>

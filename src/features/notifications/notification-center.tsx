@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bell, Check, X, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AccountState, NotificationRecord, TradingConfig } from '@/shared/types';
+import { SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD, type AccountState, type NotificationRecord, type TradingConfig } from '@/shared/types';
 import { formatPrice, formatUSDT, formatTimestamp } from '@/lib/utils';
 
 type Props = {
@@ -69,10 +69,11 @@ export function NotificationCenter({ notifications, account, prices, config }: P
       && liveSelected.signal.rejectReason?.startsWith('Insufficient balance') === true
       && now > 0
       && now < liveSelected.signal.expiresAt);
+  const autoOpened = liveSelected?.signal.result === 'CONFIRMED' && Boolean(liveSelected.signal.tradeId);
   const side = liveSelected?.signal.action === 'ENTRY_LONG' ? 'LONG' : 'SHORT';
   const price = liveSelected ? (prices[liveSelected.signal.symbol] ?? liveSelected.signal.entryPrice ?? 0) : 0;
   const riskPercent = config?.riskPercent ?? 1;
-  const riskRewardRatio = config?.riskRewardRatio ?? 2;
+  const riskRewardRatio = config?.riskRewardRatio ?? 1.2;
   const takerFee = config?.takerFee ?? 0.001;
   const leverage = Math.max(1, config?.leverage ?? 125);
   const slippage = config?.slippage ?? 0.0005;
@@ -132,7 +133,8 @@ export function NotificationCenter({ notifications, account, prices, config }: P
                   <span className="min-w-0 flex-1"><span className="flex items-center justify-between"><strong className="text-xs text-terminal-text">{item.signal.symbol} · {long ? 'LONG' : 'SHORT'} · {item.signal.timeframe}</strong><span className="text-[9px] text-terminal-text-muted">{formatTimestamp(item.createdAt)}</span></span>
                     <span className="mt-1 block text-[10px] text-terminal-text-secondary">{long ? 'Previous completed histogram ≤ 0; current provisional histogram crossed above 0.' : 'Previous completed histogram ≥ 0; current provisional histogram crossed below 0.'}</span>
                     <span className="mt-1 block font-mono text-[10px] text-terminal-text-muted">Signal {formatPrice(item.signal.entryPrice)} · MACD {item.signal.macdLine.toPrecision(5)} · Signal {item.signal.macdSignal.toPrecision(5)} · Hist {item.signal.macdHistogram.toPrecision(5)}</span>
-                    <span className="mt-1 inline-flex rounded bg-terminal-border px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-terminal-text-secondary">{item.signal.result}</span>
+                    <span className="mt-1 block text-[10px] font-semibold text-terminal-accent">Signal strength {item.signal.strengthScore}/100 · {item.signal.strengthLabel}</span>
+                    <span className="mt-1 inline-flex rounded bg-terminal-border px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-terminal-text-secondary">{item.signal.result}{item.signal.tradeId ? ' · AUTO PAPER' : ''}</span>
                     {item.signal.rejectReason && <span className="mt-1 block text-[10px] text-terminal-warning">{item.signal.rejectReason}</span>}
                   </span>
                 </div>
@@ -143,16 +145,18 @@ export function NotificationCenter({ notifications, account, prices, config }: P
       </>}
       {open && liveSelected && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setSelected(null); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="confirm-signal-title" className="w-full max-w-lg rounded-md border border-terminal-border bg-terminal-surface shadow-2xl">
-          <header className="flex items-start justify-between border-b border-terminal-border px-4 py-3"><div><h2 id="confirm-signal-title" className="text-sm font-semibold text-terminal-text">Review paper entry</h2><p className="mt-0.5 text-[10px] text-terminal-text-muted">No position is created until you confirm below.</p></div><button aria-label="Cancel" onClick={() => setSelected(null)} className="rounded p-1 hover:bg-terminal-border"><X className="h-4 w-4" /></button></header>
+          <header className="flex items-start justify-between border-b border-terminal-border px-4 py-3"><div><h2 id="confirm-signal-title" className="text-sm font-semibold text-terminal-text">{autoOpened ? 'Automatic paper entry' : 'Signal details'}</h2><p className="mt-0.5 text-[10px] text-terminal-text-muted">{autoOpened ? `Paper position opened automatically at strength ${liveSelected.signal.strengthScore}/100.` : `Auto-entry threshold: ${SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD}/100. This paper terminal does not place Binance orders.`}</p></div><button aria-label="Close signal details" onClick={() => setSelected(null)} className="rounded p-1 hover:bg-terminal-border"><X className="h-4 w-4" /></button></header>
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 py-4 text-xs">
             <Review label="Signal" value={`${liveSelected.signal.symbol} ${side} · ${liveSelected.signal.timeframe}`} />
+            <Review label="Signal strength" value={`${liveSelected.signal.strengthScore}/100 · ${liveSelected.signal.strengthLabel}`} />
+            <Review label="Score breakdown" value={`EMA ${liveSelected.signal.strengthBreakdown.emaAlignment}/25 · MACD ${liveSelected.signal.strengthBreakdown.macdMomentum}/25 · Wave ${liveSelected.signal.strengthBreakdown.waveContext}/20 · RSI ${liveSelected.signal.strengthBreakdown.rsi}/10 · Volume ${liveSelected.signal.strengthBreakdown.volume}/10 · SL ${liveSelected.signal.strengthBreakdown.stopQuality}/10`} />
             <Review label="Detected" value={formatTimestamp(liveSelected.signal.createdAt)} />
             <Review label="Signal reference" value={formatPrice(liveSelected.signal.entryPrice)} />
             <Review label="Latest mark price" value={formatPrice(price)} />
             <Review label="MACD / Signal" value={`${liveSelected.signal.macdLine.toPrecision(6)} / ${liveSelected.signal.macdSignal.toPrecision(6)}`} />
             <Review label="Histogram (previous → live)" value={`${liveSelected.signal.prevHistogram.toPrecision(6)} → ${liveSelected.signal.macdHistogram.toPrecision(6)}`} />
             <Review label="Stop Loss" value={formatPrice(liveSelected.signal.stopLoss)} />
-            <Review label={`Take Profit estimate · 1:${riskRewardRatio}`} value={formatPrice(side === 'LONG' ? price + riskRewardRatio * (price - (liveSelected.signal.stopLoss ?? price)) : price - riskRewardRatio * ((liveSelected.signal.stopLoss ?? price) - price))} />
+            <Review label={`Take Profit · 1:${riskRewardRatio}`} value={formatPrice(liveSelected.signal.takeProfit ?? (side === 'LONG' ? price + riskRewardRatio * (price - (liveSelected.signal.stopLoss ?? price)) : price - riskRewardRatio * ((liveSelected.signal.stopLoss ?? price) - price)))} />
             <Review label={`Risk budget · ${riskPercent}% balance`} value={formatUSDT(riskBudget)} />
             <Review label="Available balance" value={formatUSDT(account?.availableBalance)} />
             <Review label="Estimated quantity · balance capped" value={estimatedQuantity.toPrecision(6)} />
@@ -160,8 +164,8 @@ export function NotificationCenter({ notifications, account, prices, config }: P
             <Review label="Estimated entry + exit fees" value={formatUSDT(estimatedFees, 5)} />
             <Review label="Open positions" value={`${account?.openPositionsCount ?? '—'} / ${account?.maxPositions ?? 10}`} />
           </div>
-          <p className="mx-4 rounded border border-terminal-warning/30 bg-terminal-warning/5 px-3 py-2 text-[10px] text-terminal-warning">{liveSelected.signal.rejectReason ? `${actionable ? 'Last entry attempt' : 'Signal status'}: ${liveSelected.signal.rejectReason}${actionable ? '. This signal remains open for another attempt while it is valid.' : '.'}` : 'The backend revalidates signal expiry, market freshness, risk, margin, and exchange filters. Quantity is reduced to fit available balance; simulated fills use the latest executable price.'}</p>
-          <footer className="flex justify-between gap-2 px-4 py-3"><button disabled={!actionable} onClick={() => void dismiss()} className="rounded px-2 py-1.5 text-xs text-terminal-short hover:bg-terminal-short/10 disabled:opacity-40">Dismiss signal</button><div className="flex gap-2"><button onClick={() => setSelected(null)} className="rounded border border-terminal-border px-3 py-1.5 text-xs text-terminal-text-secondary hover:bg-terminal-border">Cancel</button><button disabled={!actionable || now === 0 || busyId === liveSelected.signalId || now >= liveSelected.signal.expiresAt} onClick={() => void confirm()} className="inline-flex items-center gap-1.5 rounded bg-terminal-accent px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{busyId === liveSelected.signalId && <Loader2 className="h-3 w-3 animate-spin" />}<Check className="h-3 w-3" />Open paper order</button></div></footer>
+          <p className="mx-4 rounded border border-terminal-warning/30 bg-terminal-warning/5 px-3 py-2 text-[10px] text-terminal-warning">{liveSelected.signal.rejectReason ? `Signal status: ${liveSelected.signal.rejectReason}.` : autoOpened ? 'The position was sized to the risk and available balance limits. Stop loss and take profit are monitored by the paper engine.' : 'The engine checks score, expiry, market freshness, one-position-per-symbol, the 10-position cap, risk, margin, and exchange filters before an automatic paper fill.'}</p>
+          <footer className="flex justify-end gap-2 px-4 py-3">{actionable && <button disabled={!actionable} onClick={() => void dismiss()} className="mr-auto rounded px-2 py-1.5 text-xs text-terminal-short hover:bg-terminal-short/10 disabled:opacity-40">Dismiss signal</button>}<button onClick={() => setSelected(null)} className="rounded border border-terminal-border px-3 py-1.5 text-xs text-terminal-text-secondary hover:bg-terminal-border">Close</button>{actionable && <button disabled={now === 0 || busyId === liveSelected.signalId || now >= liveSelected.signal.expiresAt} onClick={() => void confirm()} className="inline-flex items-center gap-1.5 rounded bg-terminal-accent px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{busyId === liveSelected.signalId && <Loader2 className="h-3 w-3 animate-spin" />}<Check className="h-3 w-3" />Open paper order</button>}</footer>
         </section>
       </div>}
     </div>

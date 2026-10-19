@@ -117,14 +117,14 @@ export function useEngineStream(symbol: string, timeframe: Timeframe) {
           const notifications = data.notifications as NotificationRecord[];
           if (notificationsLoadedRef.current) {
             for (const item of notifications) {
-              if (notificationIdsRef.current.has(item.id) || item.readAt || item.signal.result !== 'ACTIONABLE') continue;
+              if (notificationIdsRef.current.has(item.id) || item.readAt) continue;
               const side = item.signal.action === 'ENTRY_LONG' ? 'LONG' : 'SHORT';
               toast.info(`New signal · ${item.signal.symbol} ${side} · ${item.signal.timeframe}`, {
-                description: `Reference ${item.signal.entryPrice ?? '—'} · Stop Loss ${item.signal.stopLoss ?? '—'}`,
-                action: {
+                description: `${item.signal.strengthScore}/100 ${item.signal.strengthLabel} · ${item.signal.tradeId ? 'Paper position opened' : item.signal.rejectReason || item.signal.result}`,
+                ...(item.signal.result === 'ACTIONABLE' ? { action: {
                   label: 'Review',
                   onClick: () => window.dispatchEvent(new CustomEvent('notification:review', { detail: { signalId: item.signalId } })),
-                },
+                } } : {}),
                 duration: 10_000,
                 id: `signal-${item.signalId}`,
               });

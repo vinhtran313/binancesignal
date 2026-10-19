@@ -2,9 +2,16 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $projectRoot '.env'
-$pgBin = Join-Path $env:LOCALAPPDATA 'Programs\PostgreSQL\17.11\pgsql\bin'
-$dataDir = Join-Path $env:LOCALAPPDATA 'PostgreSQL\data-17'
-$logFile = Join-Path $env:LOCALAPPDATA 'PostgreSQL\postgresql.log'
+$projectPgRoot = Join-Path $projectRoot '.tmp\postgres\extracted\pgsql'
+if (Test-Path (Join-Path $projectPgRoot 'bin\initdb.exe')) {
+  $pgBin = Join-Path $projectPgRoot 'bin'
+  $dataDir = Join-Path $projectRoot '.tmp\postgres\data'
+  $logFile = Join-Path $projectRoot '.tmp\postgres\postgres.log'
+} else {
+  $pgBin = Join-Path $env:LOCALAPPDATA 'Programs\PostgreSQL\17.11\pgsql\bin'
+  $dataDir = Join-Path $env:LOCALAPPDATA 'PostgreSQL\data-17'
+  $logFile = Join-Path $env:LOCALAPPDATA 'PostgreSQL\postgresql.log'
+}
 
 foreach ($tool in @('initdb.exe', 'pg_ctl.exe', 'psql.exe', 'createdb.exe')) {
   if (!(Test-Path (Join-Path $pgBin $tool))) { throw "Missing $tool in $pgBin. Install PostgreSQL 17.11 Windows binaries first." }

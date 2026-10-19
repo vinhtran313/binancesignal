@@ -4,8 +4,8 @@
  */
 
 import { prisma } from '../persistence/prisma';
-import { calculatePositionSize, roundToTickSize } from '../risk-engine';
-import type { Side, SymbolInfo, TradingConfig, Position, ExitReason } from '@/shared/types';
+import { calculatePositionSize, roundToTickSize, validateEntryConstraints } from '../risk-engine';
+import { MAX_OPEN_POSITIONS, type Side, type SymbolInfo, type TradingConfig, type Position, type ExitReason } from '@/shared/types';
 import { logger } from '../utils/logger';
 import { v4 as uuid } from 'uuid';
 
@@ -30,101 +30,66 @@ export async function executeEntry(
   strategyRunId?: string,
   signalId?: string,
   idempotencyKey?: string,
-  riskRewardRatio: number = 2,
-  analyticsSnapshot: { signal?: unknown; previousWave?: unknown; timeframe?: string } = {}
+  riskRewardRatio: number = 1.2,
+  analyticsSnapshot: {
+    signal?: unknown;
+    previousWave?: unknown;
+    timeframe?: string;
+    executionMode?: 'AUTO' | 'MANUAL';
+    strategyVersion?: string;
+  } = {}
 ): Promise<FillResult> {
   try {
-    // Check idempotency
-    if (idempotencyKey) {
-      const existing = await prisma.position.findUnique({
-        where: { idempotencyKey },
-      });
-      if (existing) {
-        logger.warn(`[Exec] Duplicate entry prevented: ${idempotencyKey}`);
-        return {
-          success: true,
-          positionId: existing.id,
-          position: mapDbPosition(existing),
-          rejectReason: null,
-        };
+    const result = await prisma.$transaction(async tx => {
+      // Serialize entries per account so simultaneous signals cannot exceed the
+      // position cap or open the same symbol twice.
+      await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "Account" WHERE "id" = ${accountId} FOR UPDATE`;
+
+      if (idempotencyKey) {
+        const existing = await tx.position.findUnique({ where: { idempotencyKey } });
+        if (existing) return { kind: 'existing' as const, position: existing };
       }
-    }
 
-    // Get account state
-    const account = await prisma.account.findUnique({
-      where: { id: accountId },
-      include: {
-        positions: { where: { status: 'OPEN' } },
-      },
-    });
+      const account = await tx.account.findUnique({
+        where: { id: accountId },
+        include: { positions: { where: { status: 'OPEN' } } },
+      });
+      if (!account) return { kind: 'rejected' as const, reason: 'Account not found' };
 
-    if (!account) {
-      return { success: false, positionId: null, position: null, rejectReason: 'Account not found' };
-    }
+      const maxPositions = Math.min(config.maxPositions, MAX_OPEN_POSITIONS);
+      const portfolioRejection = validateEntryConstraints(account.positions, symbol, maxPositions);
+      if (portfolioRejection) return { kind: 'rejected' as const, reason: portfolioRejection };
 
-    // Calculate unrealized PnL for equity
-    const openPositionsCount = account.positions.length;
+      const equity = account.balance;
+      const usedMargin = account.positions.reduce((sum, position) => sum + position.margin, 0);
+      const availableBalance = equity - usedMargin;
+      const finalEntryPrice = roundToTickSize(
+        side === 'LONG' ? entryPrice * (1 + config.slippage) : entryPrice * (1 - config.slippage),
+        symbolInfo.tickSize
+      );
+      const finalStopLoss = roundToTickSize(stopLoss, symbolInfo.tickSize);
+      const sizing = calculatePositionSize(equity, availableBalance, entryPrice, finalStopLoss, side, symbolInfo, { ...config, maxPositions }, account.positions.length);
+      if (!sizing.valid) return { kind: 'rejected' as const, reason: sizing.rejectReason || 'Position sizing failed' };
 
-    // Calculate equity (balance + unrealized PnL)
-    // For entry purposes, we use balance as conservative equity
-    const equity = account.balance;
-    const usedMargin = account.positions.reduce((sum, p) => sum + p.margin, 0);
-    const availableBalance = equity - usedMargin;
+      const riskDistance = side === 'LONG' ? finalEntryPrice - finalStopLoss : finalStopLoss - finalEntryPrice;
+      if (!(riskDistance > 0)) return { kind: 'rejected' as const, reason: 'Stop Loss is invalid at the executable entry price' };
 
-    // Apply slippage to entry price
-    const slippedEntryPrice = side === 'LONG'
-      ? entryPrice * (1 + config.slippage)
-      : entryPrice * (1 - config.slippage);
+      const rawTakeProfit = side === 'LONG'
+        ? finalEntryPrice + riskRewardRatio * riskDistance
+        : finalEntryPrice - riskRewardRatio * riskDistance;
+      const favorableTarget = side === 'LONG'
+        ? Math.ceil(rawTakeProfit / symbolInfo.tickSize) * symbolInfo.tickSize
+        : Math.floor(rawTakeProfit / symbolInfo.tickSize) * symbolInfo.tickSize;
+      const takeProfit = roundToTickSize(favorableTarget, symbolInfo.tickSize);
+      if ((side === 'LONG' && takeProfit <= finalEntryPrice) || (side === 'SHORT' && takeProfit >= finalEntryPrice)) {
+        return { kind: 'rejected' as const, reason: 'Take Profit target is invalid after tick rounding' };
+      }
 
-    // Round to tick size
-    const finalEntryPrice = roundToTickSize(slippedEntryPrice, symbolInfo.tickSize);
-    const finalStopLoss = roundToTickSize(stopLoss, symbolInfo.tickSize);
-
-    // Calculate position size
-    const sizing = calculatePositionSize(
-      equity,
-      availableBalance,
-      entryPrice,
-      finalStopLoss,
-      side,
-      symbolInfo,
-      config,
-      openPositionsCount
-    );
-
-    if (!sizing.valid) {
-      return {
-        success: false,
-        positionId: null,
-        position: null,
-        rejectReason: sizing.rejectReason,
-      };
-    }
-
-    const positionId = uuid();
-    const now = new Date();
-    const entryNotional = sizing.quantity * finalEntryPrice;
-    const entryFee = entryNotional * config.takerFee;
-    const margin = entryNotional / config.leverage;
-    const riskDistance = side === 'LONG'
-      ? finalEntryPrice - finalStopLoss
-      : finalStopLoss - finalEntryPrice;
-    if (!(riskDistance > 0)) {
-      return { success: false, positionId: null, position: null, rejectReason: 'Stop Loss is invalid at the executable entry price' };
-    }
-    const rawTakeProfit = side === 'LONG'
-      ? finalEntryPrice + riskRewardRatio * riskDistance
-      : finalEntryPrice - riskRewardRatio * riskDistance;
-    const finalTakeProfit = side === 'LONG'
-      ? Math.ceil(rawTakeProfit / symbolInfo.tickSize) * symbolInfo.tickSize
-      : Math.floor(rawTakeProfit / symbolInfo.tickSize) * symbolInfo.tickSize;
-    const takeProfit = roundToTickSize(finalTakeProfit, symbolInfo.tickSize);
-    if ((side === 'LONG' && takeProfit <= finalEntryPrice) || (side === 'SHORT' && takeProfit >= finalEntryPrice)) {
-      return { success: false, positionId: null, position: null, rejectReason: 'Take Profit target is invalid after tick rounding' };
-    }
-
-    // Create position and fee record in transaction
-    const result = await prisma.$transaction(async (tx) => {
+      const positionId = uuid();
+      const now = new Date();
+      const entryNotional = sizing.quantity * finalEntryPrice;
+      const entryFee = entryNotional * config.takerFee;
+      const margin = entryNotional / config.leverage;
       const position = await tx.position.create({
         data: {
           id: positionId,
@@ -172,7 +137,7 @@ export async function executeEntry(
             id: uuid(),
             positionId,
             sourceSignalId: signalId,
-            strategyVersion: 'macd-histogram-reversal-v1',
+            strategyVersion: analyticsSnapshot.strategyVersion || 'macd-histogram-reversal-v2',
             timeframe: analyticsSnapshot.timeframe || '5m',
             signalSnapshot: (analyticsSnapshot.signal || {}) as object,
             entrySnapshot: {
@@ -180,7 +145,8 @@ export async function executeEntry(
               sourceSignalId: signalId,
               symbol,
               side,
-              strategyVersion: 'macd-histogram-reversal-v1',
+              strategyVersion: analyticsSnapshot.strategyVersion || 'macd-histogram-reversal-v2',
+              executionMode: analyticsSnapshot.executionMode || 'MANUAL',
               timeframe: analyticsSnapshot.timeframe || '5m',
               signalReferencePrice: entryPrice,
               entryFillTime: now.toISOString(),
@@ -206,15 +172,22 @@ export async function executeEntry(
         },
       });
 
-      return position;
-    });
+      return { kind: 'created' as const, position };
+    }, { maxWait: 15_000, timeout: 30_000 });
 
-    logger.info(`[Exec] Opened ${side} ${symbol}: qty=${sizing.quantity} @ ${finalEntryPrice}, SL=${finalStopLoss}`);
+    if (result.kind === 'rejected') {
+      return { success: false, positionId: null, position: null, rejectReason: result.reason };
+    }
+    if (result.kind === 'existing') logger.warn(`[Exec] Duplicate entry prevented: ${idempotencyKey}`);
+    const position = mapDbPosition(result.position);
+    if (result.kind === 'created') {
+      logger.info(`[Exec] Opened ${side} ${symbol}: qty=${position.quantity} @ ${position.entryPrice}, SL=${position.stopLoss}`);
+    }
 
     return {
       success: true,
-      positionId,
-      position: mapDbPosition(result),
+      positionId: position.id,
+      position,
       rejectReason: null,
     };
   } catch (error) {
@@ -223,7 +196,9 @@ export async function executeEntry(
       success: false,
       positionId: null,
       position: null,
-      rejectReason: error instanceof Error ? error.message : 'Unknown error',
+      rejectReason: (error as { code?: string })?.code === 'P2002'
+        ? `Position already open for ${symbol}`
+        : error instanceof Error ? error.message : 'Unknown error',
     };
   }
 }
@@ -324,6 +299,7 @@ export async function executeExit(
 
       const analytics = await tx.tradeAnalytics.findUnique({ where: { positionId } });
       if (analytics) {
+        const signalSnapshot = analytics.signalSnapshot as Record<string, unknown>;
         await tx.tradeAnalytics.update({
           where: { positionId },
           data: {
@@ -345,6 +321,13 @@ export async function executeExit(
               targetR: position.riskRewardRatio,
               grossR: position.initialRiskBudget > 0 ? grossPnl / position.initialRiskBudget : null,
               netR: position.initialRiskBudget > 0 ? netPnl / position.initialRiskBudget : null,
+              signalStrength: {
+                score: signalSnapshot.strengthScore ?? null,
+                label: signalSnapshot.strengthLabel ?? null,
+                scoreVersion: signalSnapshot.scoreVersion ?? null,
+                breakdown: signalSnapshot.strengthBreakdown ?? null,
+              },
+              previousWave: analytics.previousWave,
               emaSnapshot: exitIndicators ?? { timeframe: null, timestamp: null, values: {}, unavailableReason: 'Completed-candle EMA values were unavailable at exit' },
               accountBalanceBefore: accountBefore?.balance ?? null,
               accountBalanceAfter: accountBefore ? accountBefore.balance + grossPnl - exitFee : null,
@@ -354,7 +337,7 @@ export async function executeExit(
       }
 
       return updated;
-    });
+    }, { maxWait: 15_000, timeout: 30_000 });
 
     logger.info(`[Exec] Closed ${side} ${position.symbol}: PnL=${netPnl.toFixed(4)}, reason=${reason}`);
 

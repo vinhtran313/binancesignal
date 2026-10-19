@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import type { SignalAction, Timeframe } from '@/shared/types';
+import type { SignalAction, SignalStrengthBreakdown, SignalStrengthLabel, Timeframe } from '@/shared/types';
 
 interface TelegramSignalAlert {
   symbol: string;
@@ -7,10 +7,16 @@ interface TelegramSignalAlert {
   action: SignalAction;
   entryPrice: number | null;
   stopLoss: number | null;
+  takeProfit: number | null;
   macdLine: number;
   macdSignal: number;
   macdHistogram: number;
   prevHistogram: number;
+  strengthScore: number;
+  strengthLabel: SignalStrengthLabel;
+  strengthBreakdown: SignalStrengthBreakdown;
+  executionStatus: string;
+  rejectReason: string | null;
   expiresAt: number;
 }
 
@@ -59,16 +65,22 @@ export async function sendTelegramSignalAlert(signal: TelegramSignalAlert): Prom
     '💹 <b>ENTRY SETUP</b>',
     `🎯 <b>Signal reference:</b> <code>${formatNumber(signal.entryPrice)}</code>`,
     `🛑 <b>Stop loss:</b> <code>${formatNumber(signal.stopLoss)}</code>`,
+    `🏁 <b>Take profit · 1:1.2:</b> <code>${formatNumber(signal.takeProfit)}</code>`,
+    '',
+    '💪 <b>SIGNAL STRENGTH</b>',
+    `Score  <b>${signal.strengthScore}/100 · ${escapeHtml(signal.strengthLabel)}</b>  ·  Auto-entry threshold 50`,
+    `EMA ${signal.strengthBreakdown.emaAlignment}/25 · MACD ${signal.strengthBreakdown.macdMomentum}/25 · Wave ${signal.strengthBreakdown.waveContext}/20`,
+    `RSI ${signal.strengthBreakdown.rsi}/10 · Volume ${signal.strengthBreakdown.volume}/10 · SL ${signal.strengthBreakdown.stopQuality}/10`,
     '',
     '📊 <b>MACD MOMENTUM</b>',
     `MACD / Signal  <code>${formatNumber(signal.macdLine)} / ${formatNumber(signal.macdSignal)}</code>`,
     `Histogram  <code>${formatNumber(signal.prevHistogram)} → ${formatNumber(signal.macdHistogram)}</code>`,
     '',
-    `⏳ <b>Valid until</b>  ${validUntil}`,
+    `🤖 <b>${escapeHtml(signal.executionStatus)}</b>`,
+    signal.rejectReason ? `Reason  ${escapeHtml(signal.rejectReason)}` : '',
     '',
-    '🧪 <b>PAPER TRADE</b>',
-    'Review and confirm in the web terminal. No order is placed automatically.',
-  ].join('\n');
+    `⏳ <b>Valid until</b>  ${validUntil}`,
+  ].filter(Boolean).join('\n');
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {

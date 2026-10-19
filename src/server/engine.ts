@@ -21,6 +21,7 @@ import {
 } from './market-data/binance-rest';
 import { calculateAllIndicators } from './indicators';
 import { checkMacdSignal, createSignalIdempotencyKey, buildSignalEvent } from './strategy-engine';
+import { detectMacdWaves } from './strategy-engine/wave-detection';
 import { executeEntry, executeExit, checkStopLosses } from './execution-engine';
 import {
   getAccountState,
@@ -48,8 +49,10 @@ import type {
   TradingConfig,
   IndicatorSeries,
   ExitReason,
+  SignalStrengthLabel,
+  SignalStrengthBreakdown,
 } from '@/shared/types';
-import { DEFAULT_TRADING_CONFIG, TIMEFRAMES } from '@/shared/types';
+import { DEFAULT_TRADING_CONFIG, INITIAL_BALANCE, MAX_OPEN_POSITIONS, SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD, TIMEFRAMES } from '@/shared/types';
 
 // Global state (singleton worker)
 class TradingEngine {
@@ -72,6 +75,7 @@ class TradingEngine {
   private strategyTimeframe: Timeframe = '5m';
   private config: TradingConfig = { ...DEFAULT_TRADING_CONFIG };
   private processedCandles: Set<string> = new Set(); // Dedup
+  private processingCandles: Set<string> = new Set(); // Prevent overlapping updates for the same live candle
   private snapshotTimer: NodeJS.Timeout | null = null;
   private slCheckTimer: NodeJS.Timeout | null = null;
   private lastProcessedAt: number | null = null;
@@ -127,7 +131,7 @@ class TradingEngine {
     logger.info('[Engine] Initializing...');
 
     // Ensure account exists
-    this.accountId = await ensureAccount(500);
+    this.accountId = await ensureAccount(INITIAL_BALANCE);
 
     // Fetch exchange info
     const allSymbols = await fetchExchangeInfo();
@@ -301,6 +305,9 @@ class TradingEngine {
   private async processSignalUpdate(symbol: string, timeframe: Timeframe, candle: Candle) {
     if (!this.strategyRunId) return;
     const candleKey = `${symbol}:${timeframe}:${candle.openTime}`;
+    const liveCandleKey = candle.isClosed ? null : candleKey;
+    if (liveCandleKey && (this.processedCandles.has(liveCandleKey) || this.processingCandles.has(liveCandleKey))) return;
+    if (liveCandleKey) this.processingCandles.add(liveCandleKey);
     try {
       if (candle.isClosed) {
         const expired = await prisma.signalEvent.updateMany({
@@ -313,19 +320,22 @@ class TradingEngine {
       if (this.strategyStatus !== 'RUNNING' || this.connectionStatus !== 'CONNECTED') return;
       const sourceTimes = this.config.triggerPriceModel === 'LAST_PRICE' ? this.lastPriceTimes : this.markPriceTimes;
       if (!sourceTimes.has(symbol) || Date.now() - sourceTimes.get(symbol)! > 10_000) return;
-      if (this.processedCandles.has(candleKey)) return;
-
       const candles = this.candleHistory.get(symbol)?.get(timeframe);
       if (!candles || candles.length < 36) return;
       const signal = checkMacdSignal(candles, 12, 26, 9);
       if (!signal.hasSignal || !signal.action || !this.strategyRunId) return;
 
       const key = createSignalIdempotencyKey(this.strategyRunId, symbol, timeframe, candle.openTime);
-      const signalEvent = buildSignalEvent(signal, this.strategyRunId, symbol, timeframe, candle.closeTime, candle.openTime, candle.closeTime);
+      const thresholdReason = signal.strength && signal.strength.score < SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD
+        ? `Signal strength ${signal.strength.score}/100 is below the auto-entry threshold ${SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD}`
+        : null;
+      const storedSignal = { ...signal, rejectReason: signal.rejectReason || thresholdReason };
+      const signalEvent = buildSignalEvent(storedSignal, this.strategyRunId, symbol, timeframe, candle.closeTime, candle.openTime, candle.closeTime);
       const created = await prisma.$transaction(async tx => {
         const event = await tx.signalEvent.create({
           data: {
             ...signalEvent,
+            strengthBreakdown: signalEvent.strengthBreakdown as object,
             candleCloseTime: new Date(candle.closeTime),
             candleOpenTime: new Date(candle.openTime),
             expiresAt: new Date(candle.closeTime + 1),
@@ -335,34 +345,48 @@ class TradingEngine {
         });
         await tx.notification.create({ data: { signalId: event.id } });
         return { event };
-      });
+      }, { maxWait: 15_000, timeout: 30_000 });
       this.processedCandles.add(candleKey);
       this.totalSignals++;
       this.lastProcessedAt = Date.now();
+      let latestEvent = created.event;
+      let executionStatus = 'NOT EXECUTED';
       if (created.event.result === 'ACTIONABLE') {
-        void sendTelegramSignalAlert({
-          symbol,
-          timeframe,
-          action: signal.action,
-          entryPrice: created.event.entryPrice,
-          stopLoss: created.event.stopLoss,
-          macdLine: created.event.macdLine,
-          macdSignal: created.event.macdSignal,
-          macdHistogram: created.event.macdHistogram,
-          prevHistogram: created.event.prevHistogram,
-          expiresAt: created.event.expiresAt.getTime(),
-        });
+        const execution = await this.executeSignal(created.event.id, 'AUTO');
+        const updatedEvent = await prisma.signalEvent.findUnique({ where: { id: created.event.id } });
+        if (updatedEvent) latestEvent = updatedEvent;
+        executionStatus = execution.success ? 'AUTO PAPER POSITION OPENED' : `NO TRADE · ${execution.rejectReason || 'Entry rejected'}`;
       }
+      void sendTelegramSignalAlert({
+        symbol,
+        timeframe,
+        action: signal.action,
+        entryPrice: latestEvent.entryPrice,
+        stopLoss: latestEvent.stopLoss,
+        takeProfit: latestEvent.takeProfit,
+        macdLine: latestEvent.macdLine,
+        macdSignal: latestEvent.macdSignal,
+        macdHistogram: latestEvent.macdHistogram,
+        prevHistogram: latestEvent.prevHistogram,
+        strengthScore: latestEvent.strengthScore,
+        strengthLabel: latestEvent.strengthLabel as SignalStrengthLabel,
+        strengthBreakdown: latestEvent.strengthBreakdown as unknown as SignalStrengthBreakdown,
+        executionStatus,
+        rejectReason: latestEvent.rejectReason,
+        expiresAt: latestEvent.expiresAt.getTime(),
+      });
       // The SSE route reloads the canonical serialized list for every new signal.
       this.broadcast({ type: 'notifications:refresh' });
       this.broadcastStrategyState();
-      logger.info(`[Signal] ${signal.side} ${symbol} intrabar notification ${created.event.id}`);
+      logger.info(`[Signal] ${signal.side} ${symbol} score=${latestEvent.strengthScore}/100 ${executionStatus} ${created.event.id}`);
     } catch (error) {
       if ((error as { code?: string })?.code === 'P2002') {
         this.processedCandles.add(candleKey);
         return;
       }
       logger.error(`[Signal] Error evaluating ${symbol}`, error);
+    } finally {
+      if (liveCandleKey) this.processingCandles.delete(liveCandleKey);
     }
   }
 
@@ -450,7 +474,7 @@ class TradingEngine {
     }
 
     if (config) {
-      this.config = { ...this.config, ...config };
+      this.config = { ...this.config, ...config, maxPositions: Math.min(config.maxPositions ?? this.config.maxPositions, MAX_OPEN_POSITIONS) };
       this.monitoredSymbols = config.enabledSymbols?.length
         ? this.universeSymbols.filter(symbol => config.enabledSymbols!.includes(symbol))
         : [...this.universeSymbols];
@@ -604,6 +628,10 @@ class TradingEngine {
   }
 
   async confirmSignal(signalId: string) {
+    return this.executeSignal(signalId, 'MANUAL');
+  }
+
+  private async executeSignal(signalId: string, executionMode: 'AUTO' | 'MANUAL') {
     let signal = await prisma.signalEvent.findUnique({ where: { id: signalId }, include: { position: true } });
     if (!signal) return { success: false, rejectReason: 'Signal not found', position: null };
     if (
@@ -625,6 +653,9 @@ class TradingEngine {
       return { success: true, rejectReason: null, position: signal.position };
     }
     if (signal.result !== 'ACTIONABLE') return { success: false, rejectReason: `Signal is ${signal.result.toLowerCase()}`, position: null };
+    if (signal.strengthScore < SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD) {
+      return this.rejectSignal(signalId, `Signal strength ${signal.strengthScore}/100 is below the auto-entry threshold ${SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD}`);
+    }
     if (Date.now() >= signal.expiresAt.getTime()) {
       await prisma.signalEvent.update({ where: { id: signalId }, data: { result: 'EXPIRED' } });
       this.broadcast({ type: 'notifications:refresh' });
@@ -647,26 +678,49 @@ class TradingEngine {
     });
     if (!claimed.count) return { success: false, rejectReason: 'Signal is no longer actionable', position: null };
 
-    const indicators = this.indicatorCache.get(`${signal.symbol}:${signal.timeframe}`);
-    const hist = indicators?.macdHistogram ?? [];
+    const candleHistory = this.getCandleHistory(signal.symbol, signal.timeframe as Timeframe);
+    const indicators = calculateAllIndicators(candleHistory);
     const waveType = side === 'LONG' ? 'POSITIVE' : 'NEGATIVE';
     let previousWave: Record<string, unknown> = { status: 'UNAVAILABLE', reason: 'No completed same-direction MACD wave is available' };
-    const waves = (await import('./strategy-engine/wave-detection')).detectMacdWaves(hist, this.getCandleHistory(signal.symbol, signal.timeframe as Timeframe), indicators?.macdLine ?? []);
+    const waves = detectMacdWaves(indicators.macdHistogram, candleHistory, indicators.macdLine);
     const wave = [...waves].reverse().find(item => item.type === waveType && item.endTime < signal.candleOpenTime.getTime());
     if (wave) previousWave = { ...wave, status: 'VALID' };
 
+    const lastIndex = candleHistory.length - 1;
+    const signalSnapshot = {
+      id: signal.id,
+      detectionTime: signal.createdAt.toISOString(),
+      referencePrice: signal.entryPrice,
+      strengthScore: signal.strengthScore,
+      strengthLabel: signal.strengthLabel,
+      scoreVersion: signal.scoreVersion,
+      strengthBreakdown: signal.strengthBreakdown,
+      macdLine: signal.macdLine,
+      signalLine: signal.macdSignal,
+      histogram: signal.macdHistogram,
+      previousHistogram: signal.prevHistogram,
+      indicators: {
+        timestamp: candleHistory[lastIndex]?.closeTime ?? null,
+        ema34: indicators.ema34[lastIndex] ?? null,
+        ema89: indicators.ema89[lastIndex] ?? null,
+        ema200: indicators.ema200[lastIndex] ?? null,
+        ema610: indicators.ema610[lastIndex] ?? null,
+        rsi14: indicators.rsi14[lastIndex] ?? null,
+      },
+    };
+
     const result = await executeEntry(
       this.accountId, signal.symbol, side, referencePrice, signal.stopLoss, symbolInfo,
-      this.config, signal.strategyRunId, signal.id, `manual:${signal.id}`, this.config.riskRewardRatio,
-      { timeframe: signal.timeframe, signal: { id: signal.id, detectionTime: signal.createdAt.toISOString(), referencePrice: signal.entryPrice, macdLine: signal.macdLine, signalLine: signal.macdSignal, histogram: signal.macdHistogram, previousHistogram: signal.prevHistogram }, previousWave }
+      this.config, signal.strategyRunId, signal.id, `${executionMode.toLowerCase()}:${signal.id}`, this.config.riskRewardRatio,
+      { timeframe: signal.timeframe, signal: signalSnapshot, previousWave, executionMode, strategyVersion: 'macd-histogram-reversal-v2' }
     );
     if (!result.success || !result.position) {
-      const canRetryAfterBalanceChange = result.rejectReason?.startsWith('Insufficient balance') ?? false;
+      const canRetryAfterBalanceChange = executionMode === 'MANUAL' && (result.rejectReason?.startsWith('Insufficient balance') ?? false);
       await prisma.signalEvent.update({
         where: { id: signalId },
         data: { result: canRetryAfterBalanceChange ? 'ACTIONABLE' : 'REJECTED', rejectReason: result.rejectReason },
       });
-      if (!canRetryAfterBalanceChange) {
+      if (executionMode === 'MANUAL' && !canRetryAfterBalanceChange) {
         await prisma.notification.updateMany({ where: { signalId }, data: { readAt: new Date() } });
       }
       this.broadcast({ type: 'notifications:refresh' });
@@ -674,7 +728,9 @@ class TradingEngine {
     }
 
     await prisma.signalEvent.update({ where: { id: signalId }, data: { result: 'CONFIRMED', rejectReason: null, takeProfit: result.position.takeProfit } });
-    await prisma.notification.updateMany({ where: { signalId }, data: { readAt: new Date() } });
+    if (executionMode === 'MANUAL') {
+      await prisma.notification.updateMany({ where: { signalId }, data: { readAt: new Date() } });
+    }
     this.broadcast({ type: 'notifications:refresh' });
     this.broadcastAccountState();
     this.broadcastPositions();

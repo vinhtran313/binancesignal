@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { cn, formatTimestamp } from '@/lib/utils';
 import type { StrategyState, ConnectionStatus, Timeframe, TradingConfig } from '@/shared/types';
 import { TIMEFRAMES } from '@/shared/types';
+import { SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD } from '@/shared/types';
 import { X, Play, Pause, Square, RotateCcw, AlertTriangle, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,7 +26,7 @@ export function StrategyPanel({ strategy, connection, onClose, symbols, config }
   const [leverage, setLeverage] = useState(125);
   const [takerFee, setTakerFee] = useState(0.001);
   const [slippage, setSlippage] = useState(0.0005);
-  const [riskRewardRatio, setRiskRewardRatio] = useState(2);
+  const [riskRewardRatio, setRiskRewardRatio] = useState(1.2);
   const [enabledSymbols, setEnabledSymbols] = useState<string[] | null>(null);
   const [triggerPriceModel, setTriggerPriceModel] = useState<'MARK_PRICE' | 'LAST_PRICE'>('MARK_PRICE');
 
@@ -40,7 +41,7 @@ export function StrategyPanel({ strategy, connection, onClose, symbols, config }
       setLeverage(config.leverage);
       setTakerFee(config.takerFee);
       setSlippage(config.slippage);
-      setRiskRewardRatio(config.riskRewardRatio ?? 2);
+      setRiskRewardRatio(config.riskRewardRatio ?? 1.2);
       setTriggerPriceModel(config.triggerPriceModel ?? 'MARK_PRICE');
     }
   }, [config, enabledSymbols, symbols]);
@@ -132,6 +133,9 @@ export function StrategyPanel({ strategy, connection, onClose, symbols, config }
               <span className="block font-mono text-terminal-short">{strategy?.rejectedCount || 0}</span>
             </div>
           </div>
+          <p className="mt-2 rounded border border-terminal-accent/20 bg-terminal-accent/5 px-2 py-1.5 text-[10px] text-terminal-text-secondary">
+            Auto paper entry at strength ≥ {SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD}/100 · one position per coin · maximum 10 open · RR 1:1.2
+          </p>
 
           {strategy?.lastProcessedAt && (
             <div className="mt-2 text-xxs text-terminal-text-muted">
@@ -260,7 +264,7 @@ export function StrategyPanel({ strategy, connection, onClose, symbols, config }
                 value={maxPositions}
                 onChange={e => setMaxPositions(parseInt(e.target.value) || 10)}
                 min={1}
-                max={20}
+                max={10}
                 disabled={isRunning || isPaused}
                 className="w-20 px-2 py-1 text-xs bg-terminal-bg border border-terminal-border rounded
                            text-terminal-text font-mono focus:outline-none focus:border-terminal-accent
@@ -269,7 +273,7 @@ export function StrategyPanel({ strategy, connection, onClose, symbols, config }
             </ConfigField>
 
             <ConfigField label="Risk : reward">
-              <input type="number" value={riskRewardRatio} onChange={e => setRiskRewardRatio(parseFloat(e.target.value) || 2)} min={0.1} max={10} step={0.1} disabled={isRunning || isPaused} className="w-20 px-2 py-1 text-xs bg-terminal-bg border border-terminal-border rounded text-terminal-text font-mono focus:outline-none focus:border-terminal-accent disabled:opacity-50" />
+              <input type="number" value={riskRewardRatio} onChange={e => setRiskRewardRatio(parseFloat(e.target.value) || 1.2)} min={0.1} max={10} step={0.1} disabled={isRunning || isPaused} className="w-20 px-2 py-1 text-xs bg-terminal-bg border border-terminal-border rounded text-terminal-text font-mono focus:outline-none focus:border-terminal-accent disabled:opacity-50" />
             </ConfigField>
 
             <ConfigField label="Leverage">

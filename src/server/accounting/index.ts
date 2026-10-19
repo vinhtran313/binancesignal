@@ -5,7 +5,7 @@
 import { prisma } from '../persistence/prisma';
 import { logger } from '../utils/logger';
 import { v4 as uuid } from 'uuid';
-import type { Side, AccountState, AccountSnapshot, Position } from '@/shared/types';
+import { MAX_OPEN_POSITIONS, type Side, type AccountState, type AccountSnapshot, type Position } from '@/shared/types';
 
 /**
  * Get current account state with unrealized PnL
@@ -59,7 +59,7 @@ export async function getAccountState(
     totalFees: account.totalFees,
     totalFunding: account.totalFunding,
     openPositionsCount: account.positions.length,
-    maxPositions,
+    maxPositions: Math.min(maxPositions, MAX_OPEN_POSITIONS),
     snapshotChangePercent: previousSnapshot && previousSnapshot.equity !== 0
       ? ((equity - previousSnapshot.equity) / previousSnapshot.equity) * 100
       : null,
@@ -70,7 +70,7 @@ export async function getAccountState(
 /**
  * Initialize or get the default account
  */
-export async function ensureAccount(initialBalance: number = 500): Promise<string> {
+export async function ensureAccount(initialBalance: number = 1000): Promise<string> {
   let account = await prisma.account.findFirst();
   if (!account) {
     account = await prisma.account.create({

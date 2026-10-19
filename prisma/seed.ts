@@ -16,8 +16,8 @@ async function main() {
       data: {
         id: uuid(),
         name: 'Paper Trading',
-        balance: 500,
-        initialBalance: 500,
+        balance: 1000,
+        initialBalance: 1000,
       },
     });
     console.log(`Created account: ${account.id}`);

@@ -8,23 +8,23 @@ export const SideSchema = z.enum(['LONG', 'SHORT']);
 export const TradingConfigSchema = z.object({
   leverage: z.number().int().min(1).max(125).default(125),
   riskPercent: z.number().min(0.1).max(10).default(1),
-  maxPositions: z.number().int().min(1).max(20).default(10),
+  maxPositions: z.number().int().min(1).max(10).default(10),
   takerFee: z.number().min(0).max(0.01).default(0.001),
   makerFee: z.number().min(0).max(0.01).default(0.001),
   slippage: z.number().min(0).max(0.01).default(0.0005),
-  riskRewardRatio: z.number().min(0.1).max(10).default(2),
+  riskRewardRatio: z.number().min(0.1).max(10).default(1.2),
   triggerPriceModel: z.enum(['MARK_PRICE', 'LAST_PRICE']).default('MARK_PRICE'),
 });
 
 export const StrategyConfigSchema = z.object({
   timeframe: TimeframeSchema.default('5m'),
   riskPercent: z.number().min(0.1).max(10).default(1),
-  maxPositions: z.number().int().min(1).max(20).default(10),
+  maxPositions: z.number().int().min(1).max(10).default(10),
   leverage: z.number().int().min(1).max(125).default(125),
   takerFee: z.number().min(0).max(0.01).default(0.001),
   makerFee: z.number().min(0).max(0.01).default(0.001),
   slippage: z.number().min(0).max(0.01).default(0.0005),
-  riskRewardRatio: z.number().min(0.1).max(10).default(2),
+  riskRewardRatio: z.number().min(0.1).max(10).default(1.2),
   triggerPriceModel: z.enum(['MARK_PRICE', 'LAST_PRICE']).default('MARK_PRICE'),
   enabledSymbols: z.array(z.string()).optional(),
   macdFast: z.number().int().min(1).default(12),

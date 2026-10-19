@@ -2,7 +2,7 @@
  * Tests for Risk Engine - Position sizing and validation
  */
 import { describe, it, expect } from 'vitest';
-import { calculatePositionSize, roundToTickSize, roundToStepSize } from '@/server/risk-engine';
+import { calculatePositionSize, roundToTickSize, roundToStepSize, validateEntryConstraints } from '@/server/risk-engine';
 import type { SymbolInfo, TradingConfig } from '@/shared/types';
 
 const defaultSymbolInfo: SymbolInfo = {
@@ -29,6 +29,13 @@ const defaultConfig: TradingConfig = {
 };
 
 describe('Position Sizing', () => {
+  it('prevents adding to a coin and hard caps concurrent positions at ten', () => {
+    expect(validateEntryConstraints([{ symbol: 'BTCUSDT' }], 'BTCUSDT', 10)).toContain('Position already open');
+    const openPositions = Array.from({ length: 10 }, (_, index) => ({ symbol: `COIN${index}USDT` }));
+    expect(validateEntryConstraints(openPositions, 'BTCUSDT', 20)).toBe('Max positions (10) reached');
+    expect(validateEntryConstraints(openPositions.slice(0, 9), 'BTCUSDT', 10)).toBeNull();
+  });
+
   it('calculates correct size based on risk budget', () => {
     const result = calculatePositionSize(
       500,      // equity

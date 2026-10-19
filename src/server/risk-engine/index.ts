@@ -4,6 +4,7 @@
  */
 
 import type { SymbolInfo, Side, TradingConfig } from '@/shared/types';
+import { MAX_OPEN_POSITIONS } from '@/shared/types';
 
 export interface PositionSizeResult {
   valid: boolean;
@@ -16,6 +17,17 @@ export interface PositionSizeResult {
   riskBudget: number;
   stopDistance: number;
   rejectReason: string | null;
+}
+
+export function validateEntryConstraints(
+  openPositions: ReadonlyArray<{ symbol: string }>,
+  symbol: string,
+  configuredMaxPositions: number
+): string | null {
+  if (openPositions.some(position => position.symbol === symbol)) return `Position already open for ${symbol}`;
+  const maxPositions = Math.min(configuredMaxPositions, MAX_OPEN_POSITIONS);
+  if (openPositions.length >= maxPositions) return `Max positions (${maxPositions}) reached`;
+  return null;
 }
 
 /**
@@ -55,8 +67,9 @@ export function calculatePositionSize(
   if (stopLoss <= 0) return reject('Invalid stop loss price');
 
   // Check max positions
-  if (openPositionsCount >= config.maxPositions) {
-    return reject(`Max positions (${config.maxPositions}) reached`);
+  const maxPositions = Math.min(config.maxPositions, MAX_OPEN_POSITIONS);
+  if (openPositionsCount >= maxPositions) {
+    return reject(`Max positions (${maxPositions}) reached`);
   }
 
   if (config.leverage <= 0) return reject('Leverage must be greater than zero');

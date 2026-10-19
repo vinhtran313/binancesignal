@@ -8,81 +8,81 @@ datasource db {
 }
 
 model Account {
-  id               String   @id @default(uuid())
-  name             String   @default("Paper Trading")
-  balance          Float    @default(500)
-  realizedPnl      Float    @default(0)
-  totalFees        Float    @default(0)
-  totalFunding     Float    @default(0)
-  initialBalance   Float    @default(500)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id             String   @id @default(uuid())
+  name           String   @default("Paper Trading")
+  balance        Float    @default(1000)
+  realizedPnl    Float    @default(0)
+  totalFees      Float    @default(0)
+  totalFunding   Float    @default(0)
+  initialBalance Float    @default(1000)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  positions        Position[]
-  snapshots        AccountSnapshot[]
-  fundingEvents    FundingEvent[]
-  feeEvents        FeeEvent[]
-  strategyRuns     StrategyRun[]
+  positions     Position[]
+  snapshots     AccountSnapshot[]
+  fundingEvents FundingEvent[]
+  feeEvents     FeeEvent[]
+  strategyRuns  StrategyRun[]
 }
 
 model AccountSnapshot {
-  id               String   @id @default(uuid())
-  accountId        String
-  balance          Float
-  equity           Float
-  unrealizedPnl    Float
-  realizedPnl      Float
-  totalFees        Float
-  totalFunding     Float
+  id                 String   @id @default(uuid())
+  accountId          String
+  balance            Float
+  equity             Float
+  unrealizedPnl      Float
+  realizedPnl        Float
+  totalFees          Float
+  totalFunding       Float
   openPositionsCount Int
-  snapshotTime     DateTime
-  createdAt        DateTime @default(now())
+  snapshotTime       DateTime
+  createdAt          DateTime @default(now())
 
-  account          Account  @relation(fields: [accountId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
 
-  @@index([accountId, snapshotTime])
   @@unique([accountId, snapshotTime])
+  @@index([accountId, snapshotTime])
 }
 
 model Position {
-  id               String    @id @default(uuid())
-  accountId        String
-  symbol           String
-  side             String    // LONG | SHORT
-  status           String    @default("OPEN") // OPEN | CLOSED
-  entryPrice       Float
-  exitPrice        Float?
-  quantity         Float
-  leverage         Int       @default(125)
-  margin           Float
-  stopLoss         Float
-  takeProfit       Float    @default(0)
-  riskRewardRatio  Float    @default(2)
-  initialRiskBudget Float   @default(0)
-  entryTime        DateTime
-  exitTime         DateTime?
-  entryNotional    Float
-  exitNotional     Float?
-  realizedGrossPnl Float?
-  entryFee         Float
-  exitFee          Float?
-  totalFees        Float     @default(0)
-  fundingPaid      Float     @default(0)
-  netPnl           Float?
-  pnlPercent       Float?
-  exitReason       String?   // STOP_LOSS | MANUAL | LIQUIDATION | STRATEGY_CLOSE
-  strategyRunId    String?
-  signalId         String?   @unique
-  idempotencyKey   String?   @unique
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  accountId         String
+  symbol            String
+  side              String // LONG | SHORT
+  status            String    @default("OPEN") // OPEN | CLOSED
+  entryPrice        Float
+  exitPrice         Float?
+  quantity          Float
+  leverage          Int       @default(125)
+  margin            Float
+  stopLoss          Float
+  takeProfit        Float     @default(0)
+  riskRewardRatio   Float     @default(1.2)
+  initialRiskBudget Float     @default(0)
+  entryTime         DateTime
+  exitTime          DateTime?
+  entryNotional     Float
+  exitNotional      Float?
+  realizedGrossPnl  Float?
+  entryFee          Float
+  exitFee           Float?
+  totalFees         Float     @default(0)
+  fundingPaid       Float     @default(0)
+  netPnl            Float?
+  pnlPercent        Float?
+  exitReason        String? // STOP_LOSS | MANUAL | LIQUIDATION | STRATEGY_CLOSE
+  strategyRunId     String?
+  signalId          String?   @unique
+  idempotencyKey    String?   @unique
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  account          Account   @relation(fields: [accountId], references: [id])
-  strategyRun      StrategyRun? @relation(fields: [strategyRunId], references: [id])
-  signal           SignalEvent? @relation(fields: [signalId], references: [id])
-  analytics        TradeAnalytics?
-  fundingEvents    FundingEvent[]
-  feeEvents        FeeEvent[]
+  account       Account         @relation(fields: [accountId], references: [id])
+  strategyRun   StrategyRun?    @relation(fields: [strategyRunId], references: [id])
+  signal        SignalEvent?    @relation(fields: [signalId], references: [id])
+  analytics     TradeAnalytics?
+  fundingEvents FundingEvent[]
+  feeEvents     FeeEvent[]
 
   @@index([accountId, status])
   @@index([symbol, status])
@@ -90,62 +90,66 @@ model Position {
 }
 
 model StrategyRun {
-  id               String   @id @default(uuid())
-  accountId        String
-  name             String   @default("MACD Histogram Reversal")
-  timeframe        String   @default("5m")
-  status           String   @default("IDLE") // IDLE | RUNNING | PAUSED | STOPPED | ERROR
-  configJson       String   @default("{}")
-  startedAt        DateTime?
-  stoppedAt        DateTime?
-  lastProcessedAt  DateTime?
-  errorMessage     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String    @id @default(uuid())
+  accountId       String
+  name            String    @default("MACD Histogram Reversal")
+  timeframe       String    @default("5m")
+  status          String    @default("IDLE") // IDLE | RUNNING | PAUSED | STOPPED | ERROR
+  configJson      String    @default("{}")
+  startedAt       DateTime?
+  stoppedAt       DateTime?
+  lastProcessedAt DateTime?
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  account          Account  @relation(fields: [accountId], references: [id])
-  signals          SignalEvent[]
-  positions        Position[]
+  account   Account       @relation(fields: [accountId], references: [id])
+  signals   SignalEvent[]
+  positions Position[]
 
   @@index([accountId, status])
 }
 
 model SignalEvent {
-  id               String   @id @default(uuid())
-  strategyRunId    String
-  symbol           String
-  timeframe        String
-  action           String   // ENTRY_LONG | ENTRY_SHORT | EXIT_LONG | EXIT_SHORT
-  result           String   @default("ACTIONABLE") // ACTIONABLE | CONFIRMING | CONFIRMED | EXPIRED | DISMISSED | REJECTED
-  rejectReason     String?
-  entryPrice       Float?
-  stopLoss         Float?
-  candleCloseTime  DateTime
-  candleOpenTime   DateTime @default(now())
-  expiresAt        DateTime @default(now())
-  confirmationTime DateTime?
-  takeProfit       Float?
-  macdLine         Float
-  macdSignal       Float
-  macdHistogram    Float
-  prevHistogram    Float
-  idempotencyKey   String   @unique
-  createdAt        DateTime @default(now())
+  id                String    @id @default(uuid())
+  strategyRunId     String
+  symbol            String
+  timeframe         String
+  action            String // ENTRY_LONG | ENTRY_SHORT | EXIT_LONG | EXIT_SHORT
+  result            String    @default("ACTIONABLE") // ACTIONABLE | CONFIRMING | CONFIRMED | EXPIRED | DISMISSED | REJECTED
+  rejectReason      String?
+  entryPrice        Float?
+  stopLoss          Float?
+  candleCloseTime   DateTime
+  candleOpenTime    DateTime  @default(now())
+  expiresAt         DateTime  @default(now())
+  confirmationTime  DateTime?
+  takeProfit        Float?
+  macdLine          Float
+  macdSignal        Float
+  macdHistogram     Float
+  prevHistogram     Float
+  strengthScore     Int       @default(0)
+  strengthLabel     String    @default("UNSCORED")
+  strengthBreakdown Json      @default("{}")
+  scoreVersion      String    @default("legacy")
+  idempotencyKey    String    @unique
+  createdAt         DateTime  @default(now())
 
-  strategyRun      StrategyRun @relation(fields: [strategyRunId], references: [id])
-  position         Position?
-  notification     Notification?
+  strategyRun  StrategyRun   @relation(fields: [strategyRunId], references: [id])
+  position     Position?
+  notification Notification?
 
   @@index([strategyRunId, symbol])
   @@index([candleCloseTime])
 }
 
 model Notification {
-  id          String   @id @default(uuid())
-  signalId    String   @unique
+  id          String      @id @default(uuid())
+  signalId    String      @unique
   readAt      DateTime?
   dismissedAt DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime    @default(now())
   signal      SignalEvent @relation(fields: [signalId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
@@ -153,76 +157,76 @@ model Notification {
 }
 
 model TradeAnalytics {
-  id                 String   @id @default(uuid())
-  positionId         String   @unique
-  sourceSignalId     String
-  strategyVersion    String
-  timeframe          String
-  signalSnapshot     Json
-  entrySnapshot      Json
-  previousWave       Json
-  exitSnapshot       Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  position           Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  id              String   @id @default(uuid())
+  positionId      String   @unique
+  sourceSignalId  String
+  strategyVersion String
+  timeframe       String
+  signalSnapshot  Json
+  entrySnapshot   Json
+  previousWave    Json
+  exitSnapshot    Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  position        Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
 
   @@index([sourceSignalId])
 }
 
 model FundingEvent {
-  id               String   @id @default(uuid())
-  accountId        String
-  positionId       String
-  symbol           String
-  fundingRate      Float
-  positionSize     Float
-  markPrice        Float
-  payment          Float    // positive = paid, negative = received
-  fundingTime      DateTime
-  idempotencyKey   String   @unique
-  createdAt        DateTime @default(now())
+  id             String   @id @default(uuid())
+  accountId      String
+  positionId     String
+  symbol         String
+  fundingRate    Float
+  positionSize   Float
+  markPrice      Float
+  payment        Float // positive = paid, negative = received
+  fundingTime    DateTime
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
 
-  account          Account  @relation(fields: [accountId], references: [id])
-  position         Position @relation(fields: [positionId], references: [id])
+  account  Account  @relation(fields: [accountId], references: [id])
+  position Position @relation(fields: [positionId], references: [id])
 
   @@index([positionId])
   @@index([fundingTime])
 }
 
 model FeeEvent {
-  id               String   @id @default(uuid())
-  accountId        String
-  positionId       String
-  symbol           String
-  side             String   // ENTRY | EXIT
-  feeRate          Float
-  notional         Float
-  feeAmount        Float
-  idempotencyKey   String   @unique
-  createdAt        DateTime @default(now())
+  id             String   @id @default(uuid())
+  accountId      String
+  positionId     String
+  symbol         String
+  side           String // ENTRY | EXIT
+  feeRate        Float
+  notional       Float
+  feeAmount      Float
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
 
-  account          Account  @relation(fields: [accountId], references: [id])
-  position         Position @relation(fields: [positionId], references: [id])
+  account  Account  @relation(fields: [accountId], references: [id])
+  position Position @relation(fields: [positionId], references: [id])
 
   @@index([positionId])
 }
 
 model SymbolUniverse {
-  id               String   @id @default(uuid())
-  symbolsJson      String   // JSON array of SymbolMapping
-  source           String   @default("coingecko")
-  createdAt        DateTime @default(now())
+  id          String   @id @default(uuid())
+  symbolsJson String // JSON array of SymbolMapping
+  source      String   @default("coingecko")
+  createdAt   DateTime @default(now())
 
   @@index([createdAt])
 }
 
 model AppEvent {
-  id               String   @id @default(uuid())
-  type             String
-  severity         String   @default("INFO") // INFO | WARN | ERROR
-  message          String
-  dataJson         String?
-  createdAt        DateTime @default(now())
+  id        String   @id @default(uuid())
+  type      String
+  severity  String   @default("INFO") // INFO | WARN | ERROR
+  message   String
+  dataJson  String?
+  createdAt DateTime @default(now())
 
   @@index([type, createdAt])
 }

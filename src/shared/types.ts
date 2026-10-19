@@ -202,8 +202,42 @@ export interface SignalEvent {
   macdSignal: number;
   macdHistogram: number;
   prevHistogram: number;
+  strengthScore: number;
+  strengthLabel: SignalStrengthLabel;
+  strengthBreakdown: SignalStrengthBreakdown;
+  scoreVersion: string;
   createdAt: number;
 }
+
+export type SignalStrengthLabel = 'STRONG' | 'MODERATE' | 'WEAK' | 'UNSCORED';
+
+export interface SignalStrengthBreakdown {
+  emaAlignment: number;
+  macdMomentum: number;
+  waveContext: number;
+  rsi: number;
+  volume: number;
+  stopQuality: number;
+  rsiValue: number | null;
+  volumeRatio: number | null;
+  atr: number | null;
+  stopDistanceAtr: number | null;
+  waveComparison: 'BULLISH_DIVERGENCE' | 'BEARISH_DIVERGENCE' | 'MOMENTUM_IMPROVING' | 'NONE' | 'UNAVAILABLE';
+  previousMacdExtreme: number | null;
+  priorMacdExtreme: number | null;
+  previousPriceExtreme: number | null;
+  priorPriceExtreme: number | null;
+}
+
+export interface SignalStrengthAssessment {
+  score: number;
+  label: Exclude<SignalStrengthLabel, 'UNSCORED'>;
+  version: string;
+  breakdown: SignalStrengthBreakdown;
+}
+
+export const SIGNAL_STRENGTH_AUTO_ENTRY_THRESHOLD = 50;
+export const MAX_OPEN_POSITIONS = 10;
 
 export interface NotificationRecord {
   id: string;
@@ -266,7 +300,7 @@ export interface SymbolMapping {
   coinId: string;
   symbol: string;
   binanceSymbol: string;
-  marketCapRank: number;
+  sortOrder: number;
   eligible: boolean;
   excludeReason: string | null;
 }
@@ -347,7 +381,7 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   takerFee: 0.001,
   makerFee: 0.001,
   slippage: 0.0005,
-  riskRewardRatio: 2,
+  riskRewardRatio: 1.2,
   triggerPriceModel: 'MARK_PRICE',
 };
 
@@ -362,7 +396,7 @@ export const DEFAULT_RSI_PERIOD = 14;
 
 // ---- Constants ----
 
-export const INITIAL_BALANCE = 500;
+export const INITIAL_BALANCE = 1000;
 export const SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 export const DISPLAY_TIMEZONE = 'Asia/Ho_Chi_Minh';
 export const MAX_CANDLES_HISTORY = 1000;

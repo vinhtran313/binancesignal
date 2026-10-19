@@ -1,55 +1,37 @@
-/**
- * Tests for symbol universe mapping
- */
-import { describe, it, expect } from 'vitest';
-import { mapToEligibleSymbols } from '@/server/symbol-universe';
+/** Tests for the configured Binance watchlist. */
+import { describe, expect, it } from 'vitest';
+import {
+  DEFAULT_WATCHLIST,
+  getConfiguredWatchlist,
+  getEligibleBinanceSymbols,
+  mapToEligibleSymbols,
+} from '@/server/symbol-universe';
 
 describe('Symbol Universe', () => {
-  const exchangeSymbols = new Set([
-    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
-    'DOGEUSDT', 'ADAUSDT', 'TRXUSDT', 'AVAXUSDT', 'SHIBUSDT',
-    'LINKUSDT', 'DOTUSDT', 'BCHUSDT', 'NEARUSDT', 'UNIUSDT',
-    'LTCUSDT', 'MATICUSDT', 'ICPUSDT',
-  ]);
-
-  it('filters out stablecoins', () => {
-    const coins = [
-      { coinId: 'tether', symbol: 'USDT', binanceSymbol: 'USDTUSDT', marketCapRank: 3 },
-      { coinId: 'usd-coin', symbol: 'USDC', binanceSymbol: 'USDCUSDT', marketCapRank: 7 },
-      { coinId: 'bitcoin', symbol: 'BTC', binanceSymbol: 'BTCUSDT', marketCapRank: 1 },
-    ];
-
-    const mapped = mapToEligibleSymbols(coins, exchangeSymbols);
-    const eligible = mapped.filter(m => m.eligible);
-    const excluded = mapped.filter(m => !m.eligible);
-
-    expect(eligible.length).toBe(1);
-    expect(eligible[0].symbol).toBe('BTC');
-    expect(excluded.length).toBe(2);
-    expect(excluded.every(e => e.excludeReason?.includes('Stablecoin'))).toBe(true);
+  it('uses the requested watchlist in the requested order by default', () => {
+    expect(DEFAULT_WATCHLIST).toEqual([
+      'BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'HYPE', 'ZEC', 'DOGE', 'XMR', 'LINK',
+      'LEO', 'NEAR', 'XLM', 'BCH', 'UNI', 'AVAX', 'SUI', 'CC', 'GRAM', 'TAO',
+      'ENA', 'OKB', 'FET', 'ONDO', 'DOT', 'PUMP', 'ASTER',
+    ]);
+    expect(getConfiguredWatchlist('')).toEqual(DEFAULT_WATCHLIST);
   });
 
-  it('excludes symbols not on Binance', () => {
-    const coins = [
-      { coinId: 'bitcoin', symbol: 'BTC', binanceSymbol: 'BTCUSDT', marketCapRank: 1 },
-      { coinId: 'fakecoin', symbol: 'FAKE', binanceSymbol: 'FAKEUSDT', marketCapRank: 10 },
-    ];
+  it('normalizes and deduplicates a custom environment list', () => {
+    expect(getConfiguredWatchlist(' eth, btc,ETH,, ')).toEqual(['ETH', 'BTC']);
+    expect(getConfiguredWatchlist(' , ')).toEqual(DEFAULT_WATCHLIST);
+  });
 
-    const mapped = mapToEligibleSymbols(coins, exchangeSymbols);
-    expect(mapped[0].eligible).toBe(true);
-    expect(mapped[1].eligible).toBe(false);
+  it('maps eligible Binance perpetuals without reordering or capping the list', () => {
+    const mapped = mapToEligibleSymbols(
+      ['btc', 'missing', 'eth'],
+      new Set(['BTCUSDT', 'ETHUSDT'])
+    );
+
+    expect(mapped.map(symbol => symbol.binanceSymbol)).toEqual(['BTCUSDT', 'MISSINGUSDT', 'ETHUSDT']);
+    expect(mapped.map(symbol => symbol.sortOrder)).toEqual([1, 2, 3]);
+    expect(mapped.map(symbol => symbol.eligible)).toEqual([true, false, true]);
     expect(mapped[1].excludeReason).toContain('not found');
-  });
-
-  it('maps all top coins correctly', () => {
-    const coins = [
-      { coinId: 'bitcoin', symbol: 'BTC', binanceSymbol: 'BTCUSDT', marketCapRank: 1 },
-      { coinId: 'ethereum', symbol: 'ETH', binanceSymbol: 'ETHUSDT', marketCapRank: 2 },
-      { coinId: 'solana', symbol: 'SOL', binanceSymbol: 'SOLUSDT', marketCapRank: 5 },
-    ];
-
-    const mapped = mapToEligibleSymbols(coins, exchangeSymbols);
-    expect(mapped.every(m => m.eligible)).toBe(true);
-    expect(mapped.length).toBe(3);
+    expect(getEligibleBinanceSymbols(mapped)).toEqual(['BTCUSDT', 'ETHUSDT']);
   });
 });
